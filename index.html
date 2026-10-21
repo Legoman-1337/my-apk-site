@@ -3,107 +3,921 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101713">
-  <title>My APKs — мои приложения</title>
+  <meta name="theme-color" content="#080d0b">
+  <meta name="description" content="Моя коллекция Android-приложений. Скачивай оригинальные APK из GitHub Releases.">
+  <title>My APKs — Android-приложения</title>
+
   <style>
-    * { box-sizing: border-box; }
+    :root {
+      color-scheme: dark;
+      --background: #080d0b;
+      --surface: #101a15;
+      --surface-light: #14221a;
+      --border: rgba(166, 255, 194, 0.14);
+      --text: #eff8f1;
+      --muted: #91a398;
+      --green: #a9f5bd;
+      --green-bright: #78f3a0;
+      --cyan: #8be9d1;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
 
     body {
+      min-height: 100vh;
       margin: 0;
-      padding: 32px 18px;
-      background: #101713;
-      color: #edf5ef;
-      font-family: system-ui, sans-serif;
+      overflow-x: hidden;
+      background:
+        radial-gradient(ellipse at 76% 13%, rgba(28, 92, 60, 0.19), transparent 34rem),
+        radial-gradient(ellipse at 12% 45%, rgba(15, 71, 57, 0.12), transparent 32rem),
+        var(--background);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
-    main {
-      max-width: 720px;
-      margin: 50px auto;
+    body::before {
+      position: fixed;
+      z-index: -1;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(170, 255, 196, 0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(170, 255, 196, 0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      content: "";
+      mask-image: linear-gradient(to bottom, black, transparent 85%);
+      pointer-events: none;
     }
 
-    .tag {
-      color: #9ee6b1;
-      font-size: 13px;
-      letter-spacing: 2px;
+    a {
+      color: inherit;
+    }
+
+    .container {
+      width: min(1120px, calc(100% - 44px));
+      margin-inline: auto;
+    }
+
+    .topbar {
+      display: flex;
+      min-height: 76px;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(166, 255, 194, 0.09);
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 11px;
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 750;
+      letter-spacing: 0.12em;
+      text-decoration: none;
       text-transform: uppercase;
     }
 
+    .brand-mark {
+      position: relative;
+      display: grid;
+      width: 34px;
+      height: 34px;
+      place-items: center;
+      border: 1px solid rgba(169, 245, 189, 0.35);
+      border-radius: 11px;
+      background: rgba(120, 243, 160, 0.08);
+      box-shadow: 0 0 24px rgba(120, 243, 160, 0.08);
+    }
+
+    .brand-mark::before {
+      width: 12px;
+      height: 12px;
+      border: 2px solid var(--green);
+      border-radius: 4px;
+      content: "";
+      transform: rotate(45deg);
+    }
+
+    .top-status,
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--green-bright);
+      box-shadow: 0 0 12px rgba(120, 243, 160, 0.9);
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    .hero {
+      display: grid;
+      min-height: 610px;
+      grid-template-columns: 1.08fr 0.92fr;
+      align-items: center;
+      gap: 44px;
+      padding-block: 62px 82px;
+    }
+
+    .hero-copy {
+      animation: fade-up 0.8s both;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 24px;
+      color: var(--green);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    .eyebrow-line {
+      width: 25px;
+      height: 1px;
+      background: var(--green);
+      box-shadow: 0 0 10px rgba(169, 245, 189, 0.8);
+    }
+
     h1 {
-      font-size: clamp(32px, 8vw, 48px);
-      margin-bottom: 8px;
+      max-width: 700px;
+      margin: 0;
+      font-size: clamp(48px, 7.2vw, 88px);
+      font-weight: 760;
+      letter-spacing: -0.075em;
+      line-height: 0.99;
     }
 
-    .subtitle {
-      color: #a4b5a8;
-      margin-bottom: 32px;
+    h1 span {
+      color: var(--green);
+      text-shadow: 0 0 35px rgba(120, 243, 160, 0.16);
     }
 
-    .app {
-      border: 1px solid #35483b;
-      background: #19231c;
-      border-radius: 18px;
-      padding: 22px;
+    .intro {
+      max-width: 490px;
+      margin: 25px 0 0;
+      color: #a6b5aa;
+      font-size: 17px;
+      line-height: 1.75;
     }
 
-    .app h2 { margin: 0 0 8px; }
-
-    .muted {
-      color: #a4b5a8;
-      font-size: 14px;
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 18px;
+      margin-top: 32px;
     }
 
-    .download {
-      display: block;
-      margin-top: 22px;
-      padding: 14px;
+    .primary-link {
+      display: inline-flex;
+      min-height: 50px;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 0 20px;
+      border: 1px solid rgba(169, 245, 189, 0.55);
       border-radius: 12px;
-      background: #a9eaba;
-      color: #102217;
-      text-align: center;
+      background: var(--green);
+      color: #07120b;
+      font-size: 14px;
+      font-weight: 750;
       text-decoration: none;
+      transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+    }
+
+    .primary-link:hover {
+      background: #c1ffd0;
+      box-shadow: 0 0 30px rgba(120, 243, 160, 0.2);
+      transform: translateY(-2px);
+    }
+
+    .primary-link:focus-visible,
+    .download-button:focus-visible,
+    .brand:focus-visible {
+      outline: 3px solid var(--cyan);
+      outline-offset: 4px;
+    }
+
+    .arrow {
+      font-size: 18px;
+      transition: transform 180ms ease;
+    }
+
+    .primary-link:hover .arrow {
+      transform: translateY(3px);
+    }
+
+    .hero-note {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .hero-visual {
+      position: relative;
+      display: grid;
+      min-height: 390px;
+      place-items: center;
+      isolation: isolate;
+      animation: fade-in 1.1s 0.15s both;
+    }
+
+    .hero-visual::before {
+      position: absolute;
+      z-index: -2;
+      width: min(78vw, 390px);
+      aspect-ratio: 1;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(64, 198, 118, 0.17), rgba(21, 103, 69, 0.06) 43%, transparent 70%);
+      content: "";
+      filter: blur(10px);
+    }
+
+    .orbit {
+      position: absolute;
+      z-index: -1;
+      width: min(74vw, 340px);
+      aspect-ratio: 1;
+      border: 1px solid rgba(169, 245, 189, 0.16);
+      border-radius: 50%;
+      animation: rotate 34s linear infinite;
+    }
+
+    .orbit::before {
+      position: absolute;
+      top: 16%;
+      left: 17%;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 18px var(--cyan);
+      content: "";
+    }
+
+    .orbit-two {
+      width: min(58vw, 265px);
+      border-color: rgba(139, 233, 209, 0.13);
+      animation-direction: reverse;
+      animation-duration: 27s;
+    }
+
+    .orbit-two::before {
+      top: auto;
+      right: 10%;
+      bottom: 23%;
+      left: auto;
+      width: 5px;
+      height: 5px;
+      background: var(--green);
+      box-shadow: 0 0 14px var(--green);
+    }
+
+    .preview-card {
+      width: min(100%, 350px);
+      padding: 21px;
+      border: 1px solid rgba(177, 255, 201, 0.2);
+      border-radius: 19px;
+      background: linear-gradient(145deg, rgba(24, 42, 31, 0.94), rgba(11, 21, 16, 0.94));
+      box-shadow:
+        0 25px 90px rgba(0, 0, 0, 0.42),
+        0 0 55px rgba(69, 199, 119, 0.09),
+        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      animation: float 6s ease-in-out infinite;
+      backdrop-filter: blur(12px);
+    }
+
+    .preview-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 16px;
+      border-bottom: 1px solid rgba(166, 255, 194, 0.1);
+    }
+
+    .window-dots {
+      display: flex;
+      gap: 6px;
+    }
+
+    .window-dots span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(169, 245, 189, 0.3);
+    }
+
+    .preview-label {
+      color: #71877a;
+      font-size: 9px;
+      letter-spacing: 0.16em;
+    }
+
+    .preview-body {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding-top: 21px;
+    }
+
+    .preview-icon {
+      display: grid;
+      width: 54px;
+      height: 54px;
+      flex: 0 0 auto;
+      place-items: center;
+      border: 1px solid rgba(169, 245, 189, 0.24);
+      border-radius: 16px;
+      background: linear-gradient(145deg, rgba(120, 243, 160, 0.2), rgba(35, 108, 71, 0.11));
+      color: var(--green);
+      font-size: 25px;
+    }
+
+    .preview-title {
+      margin: 0;
+      font-size: 20px;
       font-weight: 700;
     }
 
-    .download:hover {
-      background: #c0f3cc;
+    .preview-version {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font-size: 12px;
     }
 
-    .download:focus-visible {
-      outline: 3px solid #edf5ef;
-      outline-offset: 3px;
+    .preview-line {
+      height: 7px;
+      margin-top: 19px;
+      overflow: hidden;
+      border-radius: 99px;
+      background: rgba(169, 245, 189, 0.1);
+    }
+
+    .preview-line span {
+      display: block;
+      width: 68%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--green), var(--cyan));
+      box-shadow: 0 0 15px rgba(120, 243, 160, 0.32);
+      animation: line-glow 3s ease-in-out infinite alternate;
+    }
+
+    .preview-caption {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 12px;
+      color: #71877a;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+    }
+
+    .library {
+      padding-block: 0 94px;
+      scroll-margin-top: 30px;
+    }
+
+    .section-heading {
+      display: flex;
+      align-items: end;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 23px;
+    }
+
+    .section-kicker {
+      margin: 0 0 8px;
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 38px);
+      letter-spacing: -0.045em;
+    }
+
+    .app-count {
+      padding: 8px 11px;
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.1em;
+    }
+
+    .app-card {
+      position: relative;
+      display: grid;
+      grid-template-columns: 230px 1fr;
+      overflow: hidden;
+      border: 1px solid rgba(169, 245, 189, 0.18);
+      border-radius: 22px;
+      background:
+        radial-gradient(ellipse at 12% 50%, rgba(63, 174, 105, 0.13), transparent 47%),
+        linear-gradient(135deg, #142019, #0d1511 70%);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+      animation: fade-up 0.8s 0.25s both;
+    }
+
+    .app-card::before {
+      position: absolute;
+      top: 0;
+      right: 0;
+      left: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(169, 245, 189, 0.55), transparent);
+      content: "";
+    }
+
+    .app-art {
+      display: grid;
+      min-height: 300px;
+      place-items: center;
+      border-right: 1px solid rgba(169, 245, 189, 0.1);
+      background:
+        radial-gradient(circle, rgba(76, 190, 119, 0.14), transparent 62%),
+        rgba(8, 15, 11, 0.22);
+    }
+
+    .app-icon {
+      position: relative;
+      display: grid;
+      width: 112px;
+      height: 112px;
+      place-items: center;
+      border: 1px solid rgba(194, 255, 208, 0.46);
+      border-radius: 32px;
+      background: linear-gradient(145deg, #baf8c7, #64cb8a);
+      box-shadow:
+        0 15px 50px rgba(86, 224, 134, 0.2),
+        inset 0 1px 0 rgba(255, 255, 255, 0.55);
+      transform: rotate(-7deg);
+      transition: transform 250ms ease, box-shadow 250ms ease;
+    }
+
+    .app-card:hover .app-icon {
+      box-shadow: 0 20px 60px rgba(86, 224, 134, 0.28);
+      transform: rotate(0deg) scale(1.04);
+    }
+
+    .app-icon::before {
+      width: 43px;
+      height: 54px;
+      border: 3px solid #153522;
+      border-radius: 8px;
+      background:
+        linear-gradient(#153522, #153522) 9px 15px / 24px 2px no-repeat,
+        linear-gradient(#153522, #153522) 9px 24px / 24px 2px no-repeat,
+        linear-gradient(#153522, #153522) 9px 33px / 17px 2px no-repeat,
+        rgba(255, 255, 255, 0.2);
+      content: "";
+    }
+
+    .app-info {
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 30px clamp(22px, 5vw, 46px);
+    }
+
+    .app-overline {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 19px;
+    }
+
+    .app-type {
+      color: var(--green);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .available {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: #a8edba;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .available::before {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green-bright);
+      box-shadow: 0 0 10px rgba(120, 243, 160, 0.8);
+      content: "";
+    }
+
+    .app-title {
+      margin: 0;
+      font-size: clamp(32px, 5vw, 46px);
+      letter-spacing: -0.06em;
+    }
+
+    .app-description {
+      max-width: 470px;
+      margin: 10px 0 22px;
+      color: #9eafa3;
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .app-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 23px;
+    }
+
+    .fact {
+      min-width: 95px;
+      padding: 10px 12px;
+      border: 1px solid rgba(169, 245, 189, 0.1);
+      border-radius: 10px;
+      background: rgba(5, 12, 8, 0.28);
+    }
+
+    .fact-label {
+      display: block;
+      margin-bottom: 5px;
+      color: #71877a;
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .fact-value {
+      color: #e5f3e8;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .download-button {
+      display: inline-flex;
+      min-height: 52px;
+      align-items: center;
+      justify-content: center;
+      gap: 11px;
+      padding: 0 19px;
+      border: 1px solid rgba(169, 245, 189, 0.55);
+      border-radius: 12px;
+      background: var(--green);
+      color: #07120b;
+      font-size: 14px;
+      font-weight: 750;
+      text-decoration: none;
+      transition: transform 180ms ease, background 180ms ease, box-shadow 180ms ease;
+    }
+
+    .download-button:hover {
+      background: #c1ffd0;
+      box-shadow: 0 0 28px rgba(120, 243, 160, 0.19);
+      transform: translateY(-2px);
+    }
+
+    .download-button svg {
+      width: 17px;
+      height: 17px;
+    }
+
+    .download-note {
+      margin: 11px 0 0;
+      color: #71877a;
+      font-size: 11px;
+      line-height: 1.5;
     }
 
     footer {
-      margin-top: 28px;
-      color: #77887b;
-      font-size: 13px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding-block: 19px 28px;
+      border-top: 1px solid rgba(166, 255, 194, 0.09);
+      color: #71877a;
+      font-size: 11px;
+    }
+
+    footer a {
+      color: #a1b6a7;
+      text-decoration-color: rgba(161, 182, 167, 0.35);
+      text-underline-offset: 3px;
+    }
+
+    @keyframes fade-up {
+      from {
+        opacity: 0;
+        transform: translateY(18px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-9px); }
+    }
+
+    @keyframes rotate {
+      to { transform: rotate(360deg); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+
+    @keyframes line-glow {
+      from { opacity: 0.72; }
+      to { opacity: 1; }
+    }
+
+    @media (max-width: 760px) {
+      .hero {
+        min-height: auto;
+        grid-template-columns: 1fr;
+        gap: 12px;
+        padding-block: 72px 48px;
+      }
+
+      .hero-visual {
+        min-height: 330px;
+      }
+
+      .preview-card {
+        width: min(100%, 340px);
+      }
+
+      .app-card {
+        grid-template-columns: 1fr;
+      }
+
+      .app-art {
+        min-height: 215px;
+        border-right: 0;
+        border-bottom: 1px solid rgba(169, 245, 189, 0.1);
+      }
+
+      .app-icon {
+        width: 92px;
+        height: 92px;
+        border-radius: 27px;
+      }
+
+      .app-icon::before {
+        transform: scale(0.86);
+      }
+    }
+
+    @media (max-width: 480px) {
+      .container {
+        width: min(100% - 30px, 1120px);
+      }
+
+      .topbar {
+        min-height: 66px;
+      }
+
+      .brand {
+        font-size: 12px;
+      }
+
+      .top-status {
+        font-size: 9px;
+      }
+
+      .hero {
+        padding-top: 60px;
+      }
+
+      h1 {
+        font-size: clamp(43px, 13vw, 60px);
+      }
+
+      .intro {
+        font-size: 15px;
+      }
+
+      .hero-actions {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 13px;
+      }
+
+      .hero-visual {
+        min-height: 300px;
+      }
+
+      .section-heading {
+        align-items: flex-start;
+      }
+
+      .app-info {
+        padding: 25px 19px;
+      }
+
+      .app-overline {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .app-facts {
+        gap: 8px;
+      }
+
+      .fact {
+        min-width: calc(33.333% - 6px);
+        padding: 9px;
+      }
+
+      .download-button {
+        width: 100%;
+      }
+
+      footer {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
     }
   </style>
 </head>
+
 <body>
+  <header class="container topbar">
+    <a class="brand" href="#" aria-label="My APKs, главная страница">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>My APKs</span>
+    </a>
+
+    <div class="top-status">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span>Доступно 1 приложение</span>
+    </div>
+  </header>
+
   <main>
-    <div class="tag">Android · Downloads</div>
-    <h1>My APKs<span style="color:#a9eaba">.</span></h1>
-    <p class="subtitle">Моя коллекция Android-приложений.</p>
+    <section class="container hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <div class="eyebrow">
+          <span class="eyebrow-line" aria-hidden="true"></span>
+          Android · личная коллекция
+        </div>
 
-    <section class="app">
-      <div class="tag">Моё приложение</div>
-      <h2>Заметки</h2>
-      <p class="muted">Мои заметки для Android.</p>
-      <p class="muted">Версия: 1.0.2 · Формат: APK · Размер: 23,7 МБ</p>
+        <h1 id="hero-title">
+          Приложения.<br>
+          <span>Без лишнего.</span>
+        </h1>
 
-      <a
-        class="download"
-        href="https://github.com/legoman-1337/my-apk-site/releases/download/v1.0.2/zametki.apk"
-        aria-label="Скачать приложение Заметки версии 1.0.2, размер 23,7 мегабайта"
-      >
-        Скачать APK · 23,7 МБ
-      </a>
+        <p class="intro">
+          Мои Android-приложения в одном месте. Выбирай нужное и скачивай APK напрямую из GitHub Releases.
+        </p>
+
+        <div class="hero-actions">
+          <a class="primary-link" href="#apps">
+            Смотреть приложение
+            <span class="arrow" aria-hidden="true">↓</span>
+          </a>
+          <span class="hero-note">Просто. Напрямую. Без регистрации.</span>
+        </div>
+      </div>
+
+      <div class="hero-visual" aria-hidden="true">
+        <div class="orbit"></div>
+        <div class="orbit orbit-two"></div>
+
+        <div class="preview-card">
+          <div class="preview-top">
+            <div class="window-dots"><span></span><span></span><span></span></div>
+            <span class="preview-label">ANDROID APP</span>
+          </div>
+
+          <div class="preview-body">
+            <div class="preview-icon">✳</div>
+            <div>
+              <p class="preview-title">Заметки</p>
+              <p class="preview-version">Версия 1.0.2 · APK</p>
+            </div>
+          </div>
+
+          <div class="preview-line"><span></span></div>
+          <div class="preview-caption">
+            <span>МОЯ БИБЛИОТЕКА</span>
+            <span>01 / 01</span>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <footer>
-      My APKs · Личная коллекция приложений
-    </footer>
+    <section class="container library" id="apps" aria-labelledby="library-title">
+      <div class="section-heading">
+        <div>
+          <p class="section-kicker">Коллекция</p>
+          <h2 id="library-title">Моё приложение</h2>
+        </div>
+        <span class="app-count">01 APP</span>
+      </div>
+
+      <article class="app-card">
+        <div class="app-art" aria-hidden="true">
+          <div class="app-icon"></div>
+        </div>
+
+        <div class="app-info">
+          <div class="app-overline">
+            <span class="app-type">Android · приложение</span>
+            <span class="available">Доступно для скачивания</span>
+          </div>
+
+          <h3 class="app-title">Заметки</h3>
+          <p class="app-description">
+            Мои заметки для Android. Скачай установочный файл и установи приложение на своё устройство.
+          </p>
+
+          <div class="app-facts">
+            <div class="fact">
+              <span class="fact-label">Версия</span>
+              <span class="fact-value">1.0.2</span>
+            </div>
+            <div class="fact">
+              <span class="fact-label">Формат</span>
+              <span class="fact-value">APK</span>
+            </div>
+            <div class="fact">
+              <span class="fact-label">Размер</span>
+              <span class="fact-value">23,7 МБ</span>
+            </div>
+          </div>
+
+          <a
+            class="download-button"
+            href="https://github.com/legoman-1337/my-apk-site/releases/download/v1.0.2/zametki.apk"
+            aria-label="Скачать приложение Заметки версии 1.0.2, размер 23,7 мегабайта"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Скачать APK · 23,7 МБ
+          </a>
+
+          <p class="download-note">
+            Кнопка открывает оригинальный APK-файл в GitHub Releases.
+          </p>
+        </div>
+      </article>
+    </section>
   </main>
+
+  <footer class="container">
+    <span>My APKs · Личная коллекция приложений</span>
+    <a href="https://github.com/legoman-1337/my-apk-site/releases">Файлы хранятся в GitHub Releases</a>
+  </footer>
 </body>
 </html>
