@@ -1110,6 +1110,8 @@
 
 
     .sandbox-toggle {
+      position: relative;
+      z-index: 10001;
       min-height: 38px;
       padding: 0 13px;
       border: 1px solid var(--border);
@@ -1149,6 +1151,7 @@
     }
 
     :root.sandbox-active .sandbox-letter {
+      visibility: hidden;
       cursor: grab;
       user-select: none;
       -webkit-user-select: none;
@@ -1169,7 +1172,9 @@
       place-items: center;
       margin: 0;
       padding: 0;
-      pointer-events: none;
+      pointer-events: auto;
+      cursor: grab;
+      touch-action: none;
       white-space: pre;
       user-select: none;
       -webkit-user-select: none;
@@ -1326,7 +1331,7 @@
 
           <a
             class="download-button"
-            href="https://github.com/Legoman-1337/my-apk-site/releases/download/v2.5/zametki-2.5.apk"
+            href="https://github.com/Legoman-1337/my-apk-site/releases/latest/download/zametki-2.5.apk"
             aria-label="Скачать приложение Заметки версии 2.5"
           >
             <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1463,22 +1468,19 @@
     (() => {
       const button = document.querySelector(".sandbox-toggle");
       const status = document.querySelector(".sandbox-status");
-      const MAX_BODIES = 120;
-      const CELL_SIZE = 72;
-      const GRAVITY = 760;
+      const CELL_SIZE = 48;
+      const GRAVITY = 820;
       const bodies = [];
       const letters = [];
-      const detached = new Set();
-      const staticGrid = new Map();
+      const bodyByElement = new WeakMap();
       let enabled = false;
       let activeBody = null;
       let animationFrame = 0;
-      let gridFrame = 0;
       let lastFrameTime = 0;
 
-      const letterPattern = /^\p{L}/u;
+      const hasLetter = /\p{L}/u;
       const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-      const cellKey = (x, y) => `${x}:${y}`;
+      const worldHeight = () => Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
 
       function announce(message) {
         status.textContent = message;
@@ -1492,12 +1494,12 @@
         return Array.from(text);
       }
 
-      function wrapPageLetters() {
+      function wrapEveryPageLetter() {
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
             const parent = node.parentElement;
-            if (!parent || !letterPattern.test(node.nodeValue)) return NodeFilter.FILTER_REJECT;
-            if (parent.closest('button, a, input, textarea, select, option, script, style, svg, [contenteditable="true"], .sandbox-toggle, .sandbox-status')) {
+            if (!parent || !hasLetter.test(node.nodeValue)) return NodeFilter.FILTER_REJECT;
+            if (parent.closest('script, style, svg, textarea, input, select, option, [contenteditable="true"], .sandbox-toggle, .sandbox-status')) {
               return NodeFilter.FILTER_REJECT;
             }
             return NodeFilter.FILTER_ACCEPT;
@@ -1509,7 +1511,7 @@
         textNodes.forEach((node) => {
           const fragment = document.createDocumentFragment();
           splitGraphemes(node.nodeValue).forEach((part) => {
-            if (letterPattern.test(part)) {
+            if (hasLetter.test(part)) {
               const span = document.createElement("span");
               span.className = "sandbox-letter";
               span.textContent = part;
@@ -1523,168 +1525,213 @@
         });
       }
 
-      function addToGrid(source, rect) {
-        const left = Math.floor(rect.left / CELL_SIZE);
-        const right = Math.floor((rect.right || rect.left + rect.width) / CELL_SIZE);
-        const top = Math.floor(rect.top / CELL_SIZE);
-        const bottom = Math.floor((rect.bottom || rect.top + rect.height) / CELL_SIZE);
-        for (let gx = left; gx <= right; gx += 1) {
-          for (let gy = top; gy <= bottom; gy += 1) {
-            const key = cellKey(gx, gy);
-            if (!staticGrid.has(key)) staticGrid.set(key, []);
-            staticGrid.get(key).push({ source, rect });
-          }
-        }
-      }
-
-      function rebuildStaticGrid() {
-        gridFrame = 0;
-        if (!enabled) return;
-        staticGrid.clear();
-        letters.forEach((source) => {
-          if (!source.isConnected || detached.has(source)) return;
+      function measureLetters() {
+        return letters.map((source) => {
           const rect = source.getBoundingClientRect();
-          if (!rect.width || !rect.height || rect.right < 0 || rect.left > innerWidth || rect.bottom < 0 || rect.top > innerHeight) return;
-          addToGrid(source, {
-            left: rect.left,
-            top: rect.top,
-            right: rect.right,
-            bottom: rect.bottom,
-            width: rect.width,
-            height: rect.height
-          });
+          return {
+            source,
+            x: rect.left,
+            y: rect.top + window.scrollY,
+            width: Math.max(2, rect.width),
+            height: Math.max(2, rect.height),
+            style: getComputedStyle(source)
+          };
         });
       }
 
-      function scheduleGridRebuild() {
-        if (!enabled || gridFrame) return;
-        gridFrame = requestAnimationFrame(rebuildStaticGrid);
-      }
-
-      function makeBody(source, rect, velocityX = 0, velocityY = 0) {
-        const style = getComputedStyle(source);
+      function createBody(snapshot, fragment) {
         const ghost = document.createElement("span");
         ghost.className = "sandbox-ghost";
-        ghost.textContent = source.textContent;
+        ghost.textContent = snapshot.source.textContent;
         ghost.setAttribute("aria-hidden", "true");
-        ghost.style.width = `${Math.max(2, rect.width)}px`;
-        ghost.style.height = `${Math.max(2, rect.height)}px`;
-        ghost.style.font = style.font;
-        ghost.style.lineHeight = style.lineHeight;
-        ghost.style.letterSpacing = style.letterSpacing;
-        ghost.style.color = style.color;
-        ghost.style.textShadow = `0 3px 9px ${style.color}`;
-        document.body.appendChild(ghost);
+        ghost.style.width = `${snapshot.width}px`;
+        ghost.style.height = `${snapshot.height}px`;
+        ghost.style.font = snapshot.style.font;
+        ghost.style.lineHeight = snapshot.style.lineHeight;
+        ghost.style.letterSpacing = snapshot.style.letterSpacing;
+        ghost.style.color = snapshot.style.color;
+        ghost.style.textShadow = `0 2px 8px color-mix(in srgb, ${snapshot.style.color} 38%, transparent)`;
 
+        const area = snapshot.width * snapshot.height;
         const body = {
-          source,
+          source: snapshot.source,
           element: ghost,
-          x: rect.left,
-          y: rect.top,
-          width: Math.max(2, rect.width),
-          height: Math.max(2, rect.height),
-          vx: velocityX,
-          vy: velocityY,
+          x: snapshot.x,
+          y: snapshot.y,
+          width: snapshot.width,
+          height: snapshot.height,
+          mass: clamp(area, 40, 5000),
+          vx: 0,
+          vy: 0,
           rotation: 0,
           dragging: false,
+          sleeping: false,
+          supported: false,
+          sleepTime: 0,
           pointerId: null,
           offsetX: 0,
           offsetY: 0,
-          targetX: rect.left,
-          targetY: rect.top,
+          targetX: snapshot.x,
+          targetY: snapshot.y,
           lastPointerX: 0,
           lastPointerY: 0,
-          lastPointerTime: 0
+          lastPointerTime: 0,
+          cellLeft: 0,
+          cellRight: 0,
+          cellTop: 0,
+          cellBottom: 0
         };
-        source.style.visibility = "hidden";
-        detached.add(source);
+        snapshot.source.style.visibility = "hidden";
+        bodyByElement.set(ghost, body);
         bodies.push(body);
-        paintBody(body);
-        return body;
+        fragment.appendChild(ghost);
       }
 
       function paintBody(body) {
-        body.x = clamp(body.x, 0, Math.max(0, innerWidth - body.width));
-        body.y = clamp(body.y, 0, Math.max(0, innerHeight - body.height));
-        body.element.style.transform = `translate3d(${body.x.toFixed(2)}px, ${body.y.toFixed(2)}px, 0) rotate(${body.rotation.toFixed(2)}deg)`;
-        body.element.style.willChange = body.dragging || Math.abs(body.vx) + Math.abs(body.vy) > 16 ? "transform" : "auto";
+        const maxX = Math.max(0, document.documentElement.clientWidth - body.width);
+        const maxY = Math.max(0, worldHeight() - body.height);
+        body.x = clamp(body.x, 0, maxX);
+        body.y = clamp(body.y, 0, maxY);
+        const screenY = body.y - window.scrollY;
+        body.element.style.transform = `translate3d(${body.x.toFixed(2)}px, ${screenY.toFixed(2)}px, 0) rotate(${body.rotation.toFixed(2)}deg)`;
+        body.element.style.willChange = body.dragging || !body.sleeping ? "transform" : "auto";
       }
 
-      function promoteStaticLetters(body) {
-        const left = Math.floor(body.x / CELL_SIZE);
-        const right = Math.floor((body.x + body.width) / CELL_SIZE);
-        const top = Math.floor(body.y / CELL_SIZE);
-        const bottom = Math.floor((body.y + body.height) / CELL_SIZE);
-        const candidates = new Set();
-        for (let gx = left; gx <= right; gx += 1) {
-          for (let gy = top; gy <= bottom; gy += 1) {
-            const bucket = staticGrid.get(cellKey(gx, gy));
-            if (bucket) bucket.forEach((item) => candidates.add(item));
+      function updatePaletteColor(body, pointerX, pointerY) {
+        for (const swatch of document.querySelectorAll(".accent-swatch")) {
+          const rect = swatch.getBoundingClientRect();
+          if (pointerX < rect.left || pointerX > rect.right || pointerY < rect.top || pointerY > rect.bottom) continue;
+          const color = getComputedStyle(swatch).getPropertyValue("--swatch-color").trim();
+          if (color) {
+            body.element.style.color = color;
+            body.element.style.textShadow = `0 0 16px ${color}`;
           }
-        }
-
-        let promoted = 0;
-        for (const item of candidates) {
-          if (promoted >= 3 || bodies.length >= MAX_BODIES) break;
-          const { source, rect } = item;
-          if (!source.isConnected || detached.has(source)) continue;
-          const overlapX = Math.min(body.x + body.width, rect.right) - Math.max(body.x, rect.left);
-          const overlapY = Math.min(body.y + body.height, rect.bottom) - Math.max(body.y, rect.top);
-          if (overlapX <= 0 || overlapY <= 0) continue;
-          const centerX = rect.left + rect.width / 2;
-          const centerY = rect.top + rect.height / 2;
-          const kickX = centerX >= body.x + body.width / 2 ? Math.max(110, Math.abs(body.vx) * 0.42) : -Math.max(110, Math.abs(body.vx) * 0.42);
-          const kickY = centerY >= body.y + body.height / 2 ? Math.max(70, Math.abs(body.vy) * 0.25) : -Math.max(70, Math.abs(body.vy) * 0.25);
-          makeBody(source, rect, kickX, kickY);
-          promoted += 1;
+          return;
         }
       }
 
-      function collideBodies() {
-        for (let i = 0; i < bodies.length; i += 1) {
-          const a = bodies[i];
-          for (let j = i + 1; j < bodies.length; j += 1) {
-            const b = bodies[j];
-            const dx = (a.x + a.width / 2) - (b.x + b.width / 2);
-            const dy = (a.y + a.height / 2) - (b.y + b.height / 2);
-            const overlapX = (a.width + b.width) / 2 - Math.abs(dx);
-            const overlapY = (a.height + b.height) / 2 - Math.abs(dy);
-            if (overlapX <= 0 || overlapY <= 0) continue;
+      function activate() {
+        if (enabled) return;
+        enabled = true;
+        wrapEveryPageLetter();
+        const snapshots = measureLetters();
+        const fragment = document.createDocumentFragment();
+        snapshots.forEach((snapshot) => createBody(snapshot, fragment));
+        document.body.appendChild(fragment);
+        document.documentElement.classList.add("sandbox-active");
+        button.setAttribute("aria-pressed", "true");
+        button.textContent = "Выключить песочницу";
+        announce(`Песочница включена: активны все буквы сайта (${bodies.length}). Перетаскивайте любую букву, она останется физическим объектом.`);
+        requestPhysicsFrame();
+      }
 
-            let nx = 0;
-            let ny = 0;
-            let penetration = 0;
-            if (overlapX < overlapY) {
-              nx = dx < 0 ? -1 : 1;
-              penetration = overlapX;
-            } else {
-              ny = dy < 0 ? -1 : 1;
-              penetration = overlapY;
+      function deactivate() {
+        if (!enabled) return;
+        enabled = false;
+        activeBody = null;
+        if (animationFrame) cancelAnimationFrame(animationFrame);
+        animationFrame = 0;
+        lastFrameTime = 0;
+        bodies.forEach((body) => body.element.remove());
+        bodies.length = 0;
+        letters.forEach((span) => {
+          if (!span.isConnected) return;
+          span.style.visibility = "";
+          span.replaceWith(document.createTextNode(span.textContent));
+        });
+        letters.length = 0;
+        document.documentElement.classList.remove("sandbox-active");
+        button.setAttribute("aria-pressed", "false");
+        button.textContent = "Включить песочницу букв";
+        announce("Песочница выключена. Страница восстановлена.");
+      }
+
+      function solveCollisions() {
+        const columns = Math.max(1, Math.ceil(document.documentElement.clientWidth / CELL_SIZE));
+        const grid = new Map();
+        const currentWorldHeight = worldHeight();
+
+        bodies.forEach((body) => {
+          body.supported = body.y + body.height >= currentWorldHeight - 1;
+          body.cellLeft = Math.floor(body.x / CELL_SIZE);
+          body.cellRight = Math.floor((body.x + body.width) / CELL_SIZE);
+          body.cellTop = Math.floor(body.y / CELL_SIZE);
+          body.cellBottom = Math.floor((body.y + body.height) / CELL_SIZE);
+          for (let cx = body.cellLeft; cx <= body.cellRight; cx += 1) {
+            for (let cy = body.cellTop; cy <= body.cellBottom; cy += 1) {
+              const key = cy * columns + cx;
+              let bucket = grid.get(key);
+              if (!bucket) grid.set(key, bucket = []);
+              bucket.push(body);
             }
+          }
+        });
 
-            if (a.dragging && !b.dragging) {
-              b.x -= nx * penetration;
-              b.y -= ny * penetration;
-              if (nx) b.vx = -nx * Math.max(150, Math.abs(a.vx) * 0.48);
-              if (ny) b.vy = -ny * Math.max(120, Math.abs(a.vy) * 0.42);
-            } else if (b.dragging && !a.dragging) {
-              a.x += nx * penetration;
-              a.y += ny * penetration;
-              if (nx) a.vx = nx * Math.max(150, Math.abs(b.vx) * 0.48);
-              if (ny) a.vy = ny * Math.max(120, Math.abs(b.vy) * 0.42);
-            } else if (!a.dragging && !b.dragging) {
-              const half = penetration / 2;
-              a.x += nx * half;
-              a.y += ny * half;
-              b.x -= nx * half;
-              b.y -= ny * half;
-              const relativeVelocity = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
-              if (relativeVelocity < 0) {
-                const impulse = -(1 + 0.58) * relativeVelocity / 2;
-                a.vx += impulse * nx;
-                a.vy += impulse * ny;
-                b.vx -= impulse * nx;
-                b.vy -= impulse * ny;
+        for (const [key, bucket] of grid) {
+          const cy = Math.floor(key / columns);
+          const cx = key - cy * columns;
+          for (let i = 0; i < bucket.length; i += 1) {
+            const a = bucket[i];
+            for (let j = i + 1; j < bucket.length; j += 1) {
+              const b = bucket[j];
+              if (cx !== Math.max(a.cellLeft, b.cellLeft) || cy !== Math.max(a.cellTop, b.cellTop)) continue;
+
+              const dx = (a.x + a.width / 2) - (b.x + b.width / 2);
+              const dy = (a.y + a.height / 2) - (b.y + b.height / 2);
+              const overlapX = (a.width + b.width) / 2 - Math.abs(dx);
+              const overlapY = (a.height + b.height) / 2 - Math.abs(dy);
+              if (overlapX <= 0 || overlapY <= 0) continue;
+
+              let nx = 0;
+              let ny = 0;
+              let penetration;
+              if (overlapX < overlapY) {
+                nx = dx < 0 ? -1 : 1;
+                penetration = overlapX;
+              } else {
+                ny = dy < 0 ? -1 : 1;
+                penetration = overlapY;
+              }
+
+              if (ny < 0) a.supported = true;
+              else if (ny > 0) b.supported = true;
+
+              if ((a.sleeping && !b.sleeping) || (b.sleeping && !a.sleeping)) {
+                a.sleeping = false;
+                b.sleeping = false;
+                a.sleepTime = 0;
+                b.sleepTime = 0;
+              }
+
+              if (a.dragging && !b.dragging) {
+                b.x -= nx * penetration;
+                b.y -= ny * penetration;
+                if (nx) b.vx = -nx * Math.max(90, Math.abs(a.vx) * 0.45);
+                if (ny) b.vy = -ny * Math.max(65, Math.abs(a.vy) * 0.35);
+                b.sleeping = false;
+              } else if (b.dragging && !a.dragging) {
+                a.x += nx * penetration;
+                a.y += ny * penetration;
+                if (nx) a.vx = nx * Math.max(90, Math.abs(b.vx) * 0.45);
+                if (ny) a.vy = ny * Math.max(65, Math.abs(b.vy) * 0.35);
+                a.sleeping = false;
+              } else if (!a.dragging && !b.dragging) {
+                const inverseA = 1 / a.mass;
+                const inverseB = 1 / b.mass;
+                const inverseTotal = inverseA + inverseB;
+                a.x += nx * penetration * inverseA / inverseTotal;
+                a.y += ny * penetration * inverseA / inverseTotal;
+                b.x -= nx * penetration * inverseB / inverseTotal;
+                b.y -= ny * penetration * inverseB / inverseTotal;
+
+                const relativeVelocity = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+                if (relativeVelocity < 0) {
+                  const impulse = -(1 + 0.28) * relativeVelocity / inverseTotal;
+                  a.vx += impulse * nx * inverseA;
+                  a.vy += impulse * ny * inverseA;
+                  b.vx -= impulse * nx * inverseB;
+                  b.vy -= impulse * ny * inverseB;
+                }
               }
             }
           }
@@ -1694,47 +1741,69 @@
       function animate(now) {
         animationFrame = 0;
         if (!enabled) return;
-        const dt = lastFrameTime ? clamp((now - lastFrameTime) / 1000, 0, 0.032) : 1 / 60;
+        const dt = lastFrameTime ? clamp((now - lastFrameTime) / 1000, 0, 0.024) : 1 / 60;
         lastFrameTime = now;
-        const damping = Math.pow(0.986, dt * 60);
+        const damping = Math.pow(0.992, dt * 60);
+        const currentWorldHeight = worldHeight();
 
         bodies.forEach((body) => {
           if (body.dragging) {
+            body.sleeping = false;
             body.x = body.targetX;
             body.y = body.targetY;
-            body.rotation = clamp(body.vx * 0.012, -16, 16);
-            promoteStaticLetters(body);
-          } else {
-            const floor = Math.max(0, innerHeight - body.height);
-            const rightWall = Math.max(0, innerWidth - body.width);
-            if (!(body.y >= floor - 0.5 && body.vy >= 0)) body.vy += GRAVITY * dt;
-            body.x += body.vx * dt;
-            body.y += body.vy * dt;
-            body.vx *= damping;
-            body.vy *= damping;
-            body.rotation += body.vx * dt * 0.045;
+            body.rotation = clamp(body.vx * 0.01, -18, 18);
+            body.supported = false;
+            return;
+          }
+          if (body.sleeping) return;
 
-            if (body.x < 0 || body.x > rightWall) {
-              body.x = clamp(body.x, 0, rightWall);
-              body.vx *= -0.62;
-            }
-            if (body.y < 0) {
-              body.y = 0;
-              body.vy = Math.abs(body.vy) * 0.55;
-            } else if (body.y >= floor) {
-              body.y = floor;
-              if (Math.abs(body.vy) < 36) body.vy = 0;
-              else body.vy *= -0.52;
-              body.vx *= 0.86;
-            }
-            if (Math.abs(body.vx) < 8) body.vx = 0;
-            if (Math.abs(body.vy) < 8) body.vy = 0;
+          const floor = Math.max(0, currentWorldHeight - body.height);
+          const rightWall = Math.max(0, document.documentElement.clientWidth - body.width);
+          body.supported = body.y >= floor - 1;
+          body.vy += GRAVITY * dt;
+          body.x += body.vx * dt;
+          body.y += body.vy * dt;
+          body.vx *= damping;
+          body.vy *= damping;
+          body.rotation += body.vx * dt * 0.035;
+
+          if (body.x < 0 || body.x > rightWall) {
+            body.x = clamp(body.x, 0, rightWall);
+            body.vx *= -0.34;
+          }
+          if (body.y < 0) {
+            body.y = 0;
+            body.vy = Math.abs(body.vy) * 0.3;
+          } else if (body.y >= floor) {
+            body.y = floor;
+            body.supported = true;
+            if (Math.abs(body.vy) < 38) body.vy = 0;
+            else body.vy *= -0.28;
+            body.vx *= 0.88;
           }
         });
 
-        collideBodies();
-        bodies.forEach(paintBody);
-        if (bodies.some((body) => body.dragging || Math.abs(body.vx) + Math.abs(body.vy) > 12)) {
+        solveCollisions();
+
+        bodies.forEach((body) => {
+          if (!body.dragging && body.supported && Math.abs(body.vx) < 20 && Math.abs(body.vy) < 22) {
+            body.sleepTime += dt;
+            if (body.sleepTime >= 0.32) {
+              body.sleeping = true;
+              body.vx = 0;
+              body.vy = 0;
+            }
+          } else {
+            body.sleepTime = 0;
+          }
+          if (body.sleeping && !body.supported && body.y + body.height < currentWorldHeight - 2) {
+            body.sleeping = false;
+            body.sleepTime = 0;
+          }
+          paintBody(body);
+        });
+
+        if (bodies.some((body) => body.dragging || !body.sleeping)) {
           animationFrame = requestAnimationFrame(animate);
         } else {
           lastFrameTime = 0;
@@ -1745,96 +1814,51 @@
         if (enabled && !animationFrame) animationFrame = requestAnimationFrame(animate);
       }
 
-      function recolorFromPalette(body, x, y) {
-        const underPointer = document.elementFromPoint(x, y);
-        const swatch = underPointer && underPointer.closest(".accent-swatch");
-        if (!swatch) return;
-        const color = getComputedStyle(swatch).backgroundColor;
-        body.element.style.color = color;
-        body.element.style.textShadow = `0 0 16px ${color}`;
-      }
+      function beginDrag(event) {
+        if (!enabled || event.button !== 0) return;
+        const ghost = event.target.closest && event.target.closest(".sandbox-ghost");
+        const body = ghost && bodyByElement.get(ghost);
+        if (!body) return;
 
-      function activate() {
-        if (enabled) return;
-        enabled = true;
-        wrapPageLetters();
-        document.documentElement.classList.add("sandbox-active");
-        button.setAttribute("aria-pressed", "true");
-        button.textContent = "Выключить песочницу";
-        announce("Песочница включена. Перетаскивайте буквы, сталкивайте их, а для перекраски наведите на цвет палитры.");
-        rebuildStaticGrid();
-      }
-
-      function deactivate() {
-        if (!enabled) return;
-        enabled = false;
-        activeBody = null;
-        if (animationFrame) cancelAnimationFrame(animationFrame);
-        if (gridFrame) cancelAnimationFrame(gridFrame);
-        animationFrame = 0;
-        gridFrame = 0;
-        lastFrameTime = 0;
-        bodies.forEach((body) => body.element.remove());
-        bodies.length = 0;
-        detached.forEach((source) => {
-          if (source.isConnected) source.style.visibility = "";
-        });
-        detached.clear();
-        letters.forEach((span) => {
-          if (span.isConnected) span.replaceWith(document.createTextNode(span.textContent));
-        });
-        letters.length = 0;
-        staticGrid.clear();
-        document.documentElement.classList.remove("sandbox-active");
-        button.setAttribute("aria-pressed", "false");
-        button.textContent = "Включить песочницу букв";
-        announce("Песочница выключена. Страница восстановлена.");
-      }
-
-      button.addEventListener("click", () => {
-        if (enabled) deactivate();
-        else activate();
-      });
-
-      document.addEventListener("pointerdown", (event) => {
-        if (!enabled || event.button !== 0 || bodies.length >= MAX_BODIES) return;
-        const source = event.target.closest && event.target.closest(".sandbox-letter");
-        if (!source || detached.has(source)) return;
-        const rect = source.getBoundingClientRect();
-        if (!rect.width || !rect.height) return;
         event.preventDefault();
-        const body = makeBody(source, rect);
         body.dragging = true;
+        body.sleeping = false;
+        body.sleepTime = 0;
         body.pointerId = event.pointerId;
         body.offsetX = event.clientX - body.x;
-        body.offsetY = event.clientY - body.y;
+        body.offsetY = event.clientY + window.scrollY - body.y;
         body.targetX = body.x;
         body.targetY = body.y;
         body.lastPointerX = event.clientX;
         body.lastPointerY = event.clientY;
         body.lastPointerTime = performance.now();
         activeBody = body;
-        recolorFromPalette(body, event.clientX, event.clientY);
+        try {
+          ghost.setPointerCapture(event.pointerId);
+        } catch (_) {
+          // Перетаскивание продолжится обработчиками указателя документа.
+        }
+        updatePaletteColor(body, event.clientX, event.clientY);
         requestPhysicsFrame();
-      });
+      }
 
-      document.addEventListener("pointermove", (event) => {
+      function moveDrag(event) {
         const body = activeBody;
         if (!body || event.pointerId !== body.pointerId) return;
         const now = performance.now();
         const elapsed = Math.max(0.008, (now - body.lastPointerTime) / 1000);
-        body.vx = clamp((event.clientX - body.lastPointerX) / elapsed, -1800, 1800);
-        body.vy = clamp((event.clientY - body.lastPointerY) / elapsed, -1800, 1800);
+        body.vx = clamp((event.clientX - body.lastPointerX) / elapsed, -1600, 1600);
+        body.vy = clamp((event.clientY - body.lastPointerY) / elapsed, -1600, 1600);
         body.lastPointerX = event.clientX;
         body.lastPointerY = event.clientY;
         body.lastPointerTime = now;
-        body.targetX = clamp(event.clientX - body.offsetX, 0, Math.max(0, innerWidth - body.width));
-        body.targetY = clamp(event.clientY - body.offsetY, 0, Math.max(0, innerHeight - body.height));
-        recolorFromPalette(body, event.clientX, event.clientY);
+        body.targetX = clamp(event.clientX - body.offsetX, 0, Math.max(0, document.documentElement.clientWidth - body.width));
+        body.targetY = clamp(event.clientY + window.scrollY - body.offsetY, 0, Math.max(0, worldHeight() - body.height));
+        updatePaletteColor(body, event.clientX, event.clientY);
         requestPhysicsFrame();
-      }, { passive: true });
+      }
 
-      function releasePointer(event) {
+      function releaseDrag(event) {
         if (!activeBody || (event.pointerId !== undefined && event.pointerId !== activeBody.pointerId)) return;
         activeBody.dragging = false;
         activeBody.pointerId = null;
@@ -1842,11 +1866,23 @@
         requestPhysicsFrame();
       }
 
-      document.addEventListener("pointerup", releasePointer);
-      document.addEventListener("pointercancel", releasePointer);
-      window.addEventListener("blur", () => releasePointer({}));
-      window.addEventListener("scroll", scheduleGridRebuild, { passive: true });
-      window.addEventListener("resize", scheduleGridRebuild, { passive: true });
+      button.addEventListener("click", () => {
+        if (enabled) deactivate();
+        else activate();
+      });
+      document.addEventListener("pointerdown", beginDrag);
+      document.addEventListener("pointermove", moveDrag, { passive: true });
+      document.addEventListener("pointerup", releaseDrag);
+      document.addEventListener("pointercancel", releaseDrag);
+      window.addEventListener("blur", () => releaseDrag({}));
+      window.addEventListener("scroll", () => {
+        if (enabled) bodies.forEach(paintBody);
+      }, { passive: true });
+      window.addEventListener("resize", () => {
+        if (!enabled) return;
+        bodies.forEach(paintBody);
+        requestPhysicsFrame();
+      }, { passive: true });
     })();
   </script>
 </body>
