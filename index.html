@@ -1107,6 +1107,82 @@
         transition: border-color 0.5s ease, box-shadow 0.5s ease;
       }
     }
+
+
+    .sandbox-toggle {
+      min-height: 38px;
+      padding: 0 13px;
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      background: var(--surface);
+      color: var(--text-soft);
+      font: inherit;
+      font-size: 11px;
+      cursor: pointer;
+      transition: transform 180ms ease, background-color 0.5s ease, color 0.5s ease, border-color 0.5s ease, box-shadow 180ms ease;
+    }
+
+    .sandbox-toggle:hover {
+      border-color: var(--accent-color);
+      box-shadow: 0 0 20px color-mix(in srgb, var(--accent-color) 18%, transparent);
+      transform: translateY(-2px);
+    }
+
+    .sandbox-toggle:focus-visible {
+      outline: 3px solid var(--accent-color);
+      outline-offset: 4px;
+    }
+
+    :root.sandbox-active .sandbox-toggle {
+      border-color: var(--accent-color);
+      color: var(--accent-color);
+    }
+
+    .sandbox-status {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      clip-path: inset(50%);
+    }
+
+    :root.sandbox-active .sandbox-letter {
+      cursor: grab;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+
+    :root.sandbox-active .sandbox-letter:active {
+      cursor: grabbing;
+    }
+
+    .sandbox-ghost {
+      position: fixed;
+      z-index: 10000;
+      top: 0;
+      left: 0;
+      display: grid;
+      overflow: visible;
+      place-items: center;
+      margin: 0;
+      padding: 0;
+      pointer-events: none;
+      white-space: pre;
+      user-select: none;
+      -webkit-user-select: none;
+      transform-origin: center;
+      will-change: transform;
+      contain: layout style paint;
+      text-shadow: 0 3px 9px color-mix(in srgb, var(--accent-color) 32%, transparent);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .sandbox-ghost { will-change: auto; }
+      .sandbox-toggle { transition: none; }
+    }
   </style>
 
   <script>
@@ -1270,6 +1346,8 @@
   <footer class="container reveal">
     <span>Мои приложения · Личная коллекция приложений</span>
     <a href="https://github.com/legoman-1337/my-apk-site/releases">Все версии приложения на GitHub</a>
+    <button class="sandbox-toggle" type="button" aria-pressed="false">Включить песочницу букв</button>
+    <span class="sandbox-status" role="status" aria-live="polite"></span>
   </footer>
 
   <script>
@@ -1378,6 +1456,397 @@
       }
 
       syncThemeControls();
+    })();
+  </script>
+
+  <script>
+    (() => {
+      const button = document.querySelector(".sandbox-toggle");
+      const status = document.querySelector(".sandbox-status");
+      const MAX_BODIES = 120;
+      const CELL_SIZE = 72;
+      const GRAVITY = 760;
+      const bodies = [];
+      const letters = [];
+      const detached = new Set();
+      const staticGrid = new Map();
+      let enabled = false;
+      let activeBody = null;
+      let animationFrame = 0;
+      let gridFrame = 0;
+      let lastFrameTime = 0;
+
+      const letterPattern = /^\p{L}/u;
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+      const cellKey = (x, y) => `${x}:${y}`;
+
+      function announce(message) {
+        status.textContent = message;
+      }
+
+      function splitGraphemes(text) {
+        if (typeof Intl.Segmenter === "function") {
+          const segmenter = new Intl.Segmenter("ru", { granularity: "grapheme" });
+          return Array.from(segmenter.segment(text), (part) => part.segment);
+        }
+        return Array.from(text);
+      }
+
+      function wrapPageLetters() {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            const parent = node.parentElement;
+            if (!parent || !letterPattern.test(node.nodeValue)) return NodeFilter.FILTER_REJECT;
+            if (parent.closest('button, a, input, textarea, select, option, script, style, svg, [contenteditable="true"], .sandbox-toggle, .sandbox-status')) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+          }
+        });
+        const textNodes = [];
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+        textNodes.forEach((node) => {
+          const fragment = document.createDocumentFragment();
+          splitGraphemes(node.nodeValue).forEach((part) => {
+            if (letterPattern.test(part)) {
+              const span = document.createElement("span");
+              span.className = "sandbox-letter";
+              span.textContent = part;
+              letters.push(span);
+              fragment.appendChild(span);
+            } else {
+              fragment.appendChild(document.createTextNode(part));
+            }
+          });
+          node.replaceWith(fragment);
+        });
+      }
+
+      function addToGrid(source, rect) {
+        const left = Math.floor(rect.left / CELL_SIZE);
+        const right = Math.floor((rect.right || rect.left + rect.width) / CELL_SIZE);
+        const top = Math.floor(rect.top / CELL_SIZE);
+        const bottom = Math.floor((rect.bottom || rect.top + rect.height) / CELL_SIZE);
+        for (let gx = left; gx <= right; gx += 1) {
+          for (let gy = top; gy <= bottom; gy += 1) {
+            const key = cellKey(gx, gy);
+            if (!staticGrid.has(key)) staticGrid.set(key, []);
+            staticGrid.get(key).push({ source, rect });
+          }
+        }
+      }
+
+      function rebuildStaticGrid() {
+        gridFrame = 0;
+        if (!enabled) return;
+        staticGrid.clear();
+        letters.forEach((source) => {
+          if (!source.isConnected || detached.has(source)) return;
+          const rect = source.getBoundingClientRect();
+          if (!rect.width || !rect.height || rect.right < 0 || rect.left > innerWidth || rect.bottom < 0 || rect.top > innerHeight) return;
+          addToGrid(source, {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height
+          });
+        });
+      }
+
+      function scheduleGridRebuild() {
+        if (!enabled || gridFrame) return;
+        gridFrame = requestAnimationFrame(rebuildStaticGrid);
+      }
+
+      function makeBody(source, rect, velocityX = 0, velocityY = 0) {
+        const style = getComputedStyle(source);
+        const ghost = document.createElement("span");
+        ghost.className = "sandbox-ghost";
+        ghost.textContent = source.textContent;
+        ghost.setAttribute("aria-hidden", "true");
+        ghost.style.width = `${Math.max(2, rect.width)}px`;
+        ghost.style.height = `${Math.max(2, rect.height)}px`;
+        ghost.style.font = style.font;
+        ghost.style.lineHeight = style.lineHeight;
+        ghost.style.letterSpacing = style.letterSpacing;
+        ghost.style.color = style.color;
+        ghost.style.textShadow = `0 3px 9px ${style.color}`;
+        document.body.appendChild(ghost);
+
+        const body = {
+          source,
+          element: ghost,
+          x: rect.left,
+          y: rect.top,
+          width: Math.max(2, rect.width),
+          height: Math.max(2, rect.height),
+          vx: velocityX,
+          vy: velocityY,
+          rotation: 0,
+          dragging: false,
+          pointerId: null,
+          offsetX: 0,
+          offsetY: 0,
+          targetX: rect.left,
+          targetY: rect.top,
+          lastPointerX: 0,
+          lastPointerY: 0,
+          lastPointerTime: 0
+        };
+        source.style.visibility = "hidden";
+        detached.add(source);
+        bodies.push(body);
+        paintBody(body);
+        return body;
+      }
+
+      function paintBody(body) {
+        body.x = clamp(body.x, 0, Math.max(0, innerWidth - body.width));
+        body.y = clamp(body.y, 0, Math.max(0, innerHeight - body.height));
+        body.element.style.transform = `translate3d(${body.x.toFixed(2)}px, ${body.y.toFixed(2)}px, 0) rotate(${body.rotation.toFixed(2)}deg)`;
+        body.element.style.willChange = body.dragging || Math.abs(body.vx) + Math.abs(body.vy) > 16 ? "transform" : "auto";
+      }
+
+      function promoteStaticLetters(body) {
+        const left = Math.floor(body.x / CELL_SIZE);
+        const right = Math.floor((body.x + body.width) / CELL_SIZE);
+        const top = Math.floor(body.y / CELL_SIZE);
+        const bottom = Math.floor((body.y + body.height) / CELL_SIZE);
+        const candidates = new Set();
+        for (let gx = left; gx <= right; gx += 1) {
+          for (let gy = top; gy <= bottom; gy += 1) {
+            const bucket = staticGrid.get(cellKey(gx, gy));
+            if (bucket) bucket.forEach((item) => candidates.add(item));
+          }
+        }
+
+        let promoted = 0;
+        for (const item of candidates) {
+          if (promoted >= 3 || bodies.length >= MAX_BODIES) break;
+          const { source, rect } = item;
+          if (!source.isConnected || detached.has(source)) continue;
+          const overlapX = Math.min(body.x + body.width, rect.right) - Math.max(body.x, rect.left);
+          const overlapY = Math.min(body.y + body.height, rect.bottom) - Math.max(body.y, rect.top);
+          if (overlapX <= 0 || overlapY <= 0) continue;
+          const centerX = rect.left + rect.width / 2;
+          const centerY = rect.top + rect.height / 2;
+          const kickX = centerX >= body.x + body.width / 2 ? Math.max(110, Math.abs(body.vx) * 0.42) : -Math.max(110, Math.abs(body.vx) * 0.42);
+          const kickY = centerY >= body.y + body.height / 2 ? Math.max(70, Math.abs(body.vy) * 0.25) : -Math.max(70, Math.abs(body.vy) * 0.25);
+          makeBody(source, rect, kickX, kickY);
+          promoted += 1;
+        }
+      }
+
+      function collideBodies() {
+        for (let i = 0; i < bodies.length; i += 1) {
+          const a = bodies[i];
+          for (let j = i + 1; j < bodies.length; j += 1) {
+            const b = bodies[j];
+            const dx = (a.x + a.width / 2) - (b.x + b.width / 2);
+            const dy = (a.y + a.height / 2) - (b.y + b.height / 2);
+            const overlapX = (a.width + b.width) / 2 - Math.abs(dx);
+            const overlapY = (a.height + b.height) / 2 - Math.abs(dy);
+            if (overlapX <= 0 || overlapY <= 0) continue;
+
+            let nx = 0;
+            let ny = 0;
+            let penetration = 0;
+            if (overlapX < overlapY) {
+              nx = dx < 0 ? -1 : 1;
+              penetration = overlapX;
+            } else {
+              ny = dy < 0 ? -1 : 1;
+              penetration = overlapY;
+            }
+
+            if (a.dragging && !b.dragging) {
+              b.x -= nx * penetration;
+              b.y -= ny * penetration;
+              if (nx) b.vx = -nx * Math.max(150, Math.abs(a.vx) * 0.48);
+              if (ny) b.vy = -ny * Math.max(120, Math.abs(a.vy) * 0.42);
+            } else if (b.dragging && !a.dragging) {
+              a.x += nx * penetration;
+              a.y += ny * penetration;
+              if (nx) a.vx = nx * Math.max(150, Math.abs(b.vx) * 0.48);
+              if (ny) a.vy = ny * Math.max(120, Math.abs(b.vy) * 0.42);
+            } else if (!a.dragging && !b.dragging) {
+              const half = penetration / 2;
+              a.x += nx * half;
+              a.y += ny * half;
+              b.x -= nx * half;
+              b.y -= ny * half;
+              const relativeVelocity = (a.vx - b.vx) * nx + (a.vy - b.vy) * ny;
+              if (relativeVelocity < 0) {
+                const impulse = -(1 + 0.58) * relativeVelocity / 2;
+                a.vx += impulse * nx;
+                a.vy += impulse * ny;
+                b.vx -= impulse * nx;
+                b.vy -= impulse * ny;
+              }
+            }
+          }
+        }
+      }
+
+      function animate(now) {
+        animationFrame = 0;
+        if (!enabled) return;
+        const dt = lastFrameTime ? clamp((now - lastFrameTime) / 1000, 0, 0.032) : 1 / 60;
+        lastFrameTime = now;
+        const damping = Math.pow(0.986, dt * 60);
+
+        bodies.forEach((body) => {
+          if (body.dragging) {
+            body.x = body.targetX;
+            body.y = body.targetY;
+            body.rotation = clamp(body.vx * 0.012, -16, 16);
+            promoteStaticLetters(body);
+          } else {
+            const floor = Math.max(0, innerHeight - body.height);
+            const rightWall = Math.max(0, innerWidth - body.width);
+            if (!(body.y >= floor - 0.5 && body.vy >= 0)) body.vy += GRAVITY * dt;
+            body.x += body.vx * dt;
+            body.y += body.vy * dt;
+            body.vx *= damping;
+            body.vy *= damping;
+            body.rotation += body.vx * dt * 0.045;
+
+            if (body.x < 0 || body.x > rightWall) {
+              body.x = clamp(body.x, 0, rightWall);
+              body.vx *= -0.62;
+            }
+            if (body.y < 0) {
+              body.y = 0;
+              body.vy = Math.abs(body.vy) * 0.55;
+            } else if (body.y >= floor) {
+              body.y = floor;
+              if (Math.abs(body.vy) < 36) body.vy = 0;
+              else body.vy *= -0.52;
+              body.vx *= 0.86;
+            }
+            if (Math.abs(body.vx) < 8) body.vx = 0;
+            if (Math.abs(body.vy) < 8) body.vy = 0;
+          }
+        });
+
+        collideBodies();
+        bodies.forEach(paintBody);
+        if (bodies.some((body) => body.dragging || Math.abs(body.vx) + Math.abs(body.vy) > 12)) {
+          animationFrame = requestAnimationFrame(animate);
+        } else {
+          lastFrameTime = 0;
+        }
+      }
+
+      function requestPhysicsFrame() {
+        if (enabled && !animationFrame) animationFrame = requestAnimationFrame(animate);
+      }
+
+      function recolorFromPalette(body, x, y) {
+        const underPointer = document.elementFromPoint(x, y);
+        const swatch = underPointer && underPointer.closest(".accent-swatch");
+        if (!swatch) return;
+        const color = getComputedStyle(swatch).backgroundColor;
+        body.element.style.color = color;
+        body.element.style.textShadow = `0 0 16px ${color}`;
+      }
+
+      function activate() {
+        if (enabled) return;
+        enabled = true;
+        wrapPageLetters();
+        document.documentElement.classList.add("sandbox-active");
+        button.setAttribute("aria-pressed", "true");
+        button.textContent = "Выключить песочницу";
+        announce("Песочница включена. Перетаскивайте буквы, сталкивайте их, а для перекраски наведите на цвет палитры.");
+        rebuildStaticGrid();
+      }
+
+      function deactivate() {
+        if (!enabled) return;
+        enabled = false;
+        activeBody = null;
+        if (animationFrame) cancelAnimationFrame(animationFrame);
+        if (gridFrame) cancelAnimationFrame(gridFrame);
+        animationFrame = 0;
+        gridFrame = 0;
+        lastFrameTime = 0;
+        bodies.forEach((body) => body.element.remove());
+        bodies.length = 0;
+        detached.forEach((source) => {
+          if (source.isConnected) source.style.visibility = "";
+        });
+        detached.clear();
+        letters.forEach((span) => {
+          if (span.isConnected) span.replaceWith(document.createTextNode(span.textContent));
+        });
+        letters.length = 0;
+        staticGrid.clear();
+        document.documentElement.classList.remove("sandbox-active");
+        button.setAttribute("aria-pressed", "false");
+        button.textContent = "Включить песочницу букв";
+        announce("Песочница выключена. Страница восстановлена.");
+      }
+
+      button.addEventListener("click", () => {
+        if (enabled) deactivate();
+        else activate();
+      });
+
+      document.addEventListener("pointerdown", (event) => {
+        if (!enabled || event.button !== 0 || bodies.length >= MAX_BODIES) return;
+        const source = event.target.closest && event.target.closest(".sandbox-letter");
+        if (!source || detached.has(source)) return;
+        const rect = source.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        event.preventDefault();
+        const body = makeBody(source, rect);
+        body.dragging = true;
+        body.pointerId = event.pointerId;
+        body.offsetX = event.clientX - body.x;
+        body.offsetY = event.clientY - body.y;
+        body.targetX = body.x;
+        body.targetY = body.y;
+        body.lastPointerX = event.clientX;
+        body.lastPointerY = event.clientY;
+        body.lastPointerTime = performance.now();
+        activeBody = body;
+        recolorFromPalette(body, event.clientX, event.clientY);
+        requestPhysicsFrame();
+      });
+
+      document.addEventListener("pointermove", (event) => {
+        const body = activeBody;
+        if (!body || event.pointerId !== body.pointerId) return;
+        const now = performance.now();
+        const elapsed = Math.max(0.008, (now - body.lastPointerTime) / 1000);
+        body.vx = clamp((event.clientX - body.lastPointerX) / elapsed, -1800, 1800);
+        body.vy = clamp((event.clientY - body.lastPointerY) / elapsed, -1800, 1800);
+        body.lastPointerX = event.clientX;
+        body.lastPointerY = event.clientY;
+        body.lastPointerTime = now;
+        body.targetX = clamp(event.clientX - body.offsetX, 0, Math.max(0, innerWidth - body.width));
+        body.targetY = clamp(event.clientY - body.offsetY, 0, Math.max(0, innerHeight - body.height));
+        recolorFromPalette(body, event.clientX, event.clientY);
+        requestPhysicsFrame();
+      }, { passive: true });
+
+      function releasePointer(event) {
+        if (!activeBody || (event.pointerId !== undefined && event.pointerId !== activeBody.pointerId)) return;
+        activeBody.dragging = false;
+        activeBody.pointerId = null;
+        activeBody = null;
+        requestPhysicsFrame();
+      }
+
+      document.addEventListener("pointerup", releasePointer);
+      document.addEventListener("pointercancel", releasePointer);
+      window.addEventListener("blur", () => releasePointer({}));
+      window.addEventListener("scroll", scheduleGridRebuild, { passive: true });
+      window.addEventListener("resize", scheduleGridRebuild, { passive: true });
     })();
   </script>
 </body>
