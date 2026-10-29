@@ -1151,15 +1151,23 @@
     }
 
     :root.sandbox-active .sandbox-letter {
-      visibility: hidden;
+      visibility: visible;
+      display: inline-block;
       cursor: grab;
       user-select: none;
       -webkit-user-select: none;
       touch-action: none;
+      transition: transform 0.15s ease, color 0.2s ease, text-shadow 0.2s ease;
     }
 
-    :root.sandbox-active .sandbox-letter:active {
-      cursor: grabbing;
+    :root.sandbox-active .sandbox-letter:hover {
+      color: var(--accent-color);
+      text-shadow: 0 0 10px color-mix(in srgb, var(--accent-color) 60%, transparent);
+      transform: translateY(-2px) scale(1.08);
+    }
+
+    :root.sandbox-active .sandbox-letter.is-detached {
+      visibility: hidden !important;
     }
 
     .sandbox-ghost {
@@ -1180,8 +1188,27 @@
       -webkit-user-select: none;
       transform-origin: center;
       will-change: transform;
-      contain: layout style paint;
       text-shadow: 0 3px 9px color-mix(in srgb, var(--accent-color) 32%, transparent);
+      transition: filter 0.2s ease;
+    }
+
+    .sandbox-ghost:active {
+      cursor: grabbing;
+    }
+
+    .sandbox-ghost.is-selected {
+      outline: 2px dashed color-mix(in srgb, var(--accent-color) 70%, transparent);
+      outline-offset: 3px;
+      border-radius: 4px;
+    }
+
+    .sandbox-ghost.is-holding {
+      animation: sandbox-pulse 1.2s infinite ease-in-out alternate;
+    }
+
+    @keyframes sandbox-pulse {
+      from { filter: drop-shadow(0 0 4px var(--accent-color)); }
+      to { filter: drop-shadow(0 0 14px var(--accent-color)); }
     }
 
     .sandbox-ghost.is-pinned {
@@ -1189,6 +1216,19 @@
       text-decoration-color: var(--accent-color);
       text-decoration-thickness: 2px;
       text-underline-offset: 3px;
+      filter: drop-shadow(0 0 8px var(--accent-color));
+      cursor: pointer;
+    }
+
+    .sandbox-ghost.is-pinned::after {
+      content: "📌";
+      position: absolute;
+      top: -14px;
+      right: -10px;
+      font-size: 11px;
+      line-height: 1;
+      pointer-events: none;
+      transform: rotate(15deg);
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -1481,10 +1521,11 @@
       const bodies = [];
       const letters = [];
       const bodyByElement = new WeakMap();
+      const ghostContainer = document.createElement("div");
+      ghostContainer.id = "sandbox-ghost-container";
       let enabled = false;
       let activeBody = null;
       let selectedBody = null;
-      let touchTapBody = null;
       let animationFrame = 0;
       let lastFrameTime = 0;
 
@@ -1493,7 +1534,7 @@
       const worldHeight = () => Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
 
       function announce(message) {
-        status.textContent = message;
+        if (status) status.textContent = message;
       }
 
       function splitGraphemes(text) {
@@ -1509,7 +1550,7 @@
           acceptNode(node) {
             const parent = node.parentElement;
             if (!parent || !hasLetter.test(node.nodeValue)) return NodeFilter.FILTER_REJECT;
-            if (parent.closest('script, style, svg, textarea, input, select, option, [contenteditable="true"], .sandbox-toggle, .sandbox-status')) {
+            if (parent.closest('script, style, svg, textarea, input, select, option, [contenteditable="true"], .sandbox-toggle, .sandbox-status, #sandbox-ghost-container')) {
               return NodeFilter.FILTER_REJECT;
             }
             const isMainAction = parent.closest(".primary-link, .download-button");
@@ -1539,41 +1580,34 @@
         });
       }
 
-      function measureLetters() {
-        return letters.map((source) => {
-          const rect = source.getBoundingClientRect();
-          return {
-            source,
-            x: rect.left,
-            y: rect.top + window.scrollY,
-            width: Math.max(2, rect.width),
-            height: Math.max(2, rect.height),
-            style: getComputedStyle(source)
-          };
-        });
-      }
+      function createLetterBody(sourceSpan) {
+        const rect = sourceSpan.getBoundingClientRect();
+        const computed = getComputedStyle(sourceSpan);
+        const width = Math.max(4, rect.width);
+        const height = Math.max(4, rect.height);
+        const startX = rect.left;
+        const startY = rect.top + window.scrollY;
 
-      function createBody(snapshot, fragment) {
         const ghost = document.createElement("span");
         ghost.className = "sandbox-ghost";
-        ghost.textContent = snapshot.source.textContent;
+        ghost.textContent = sourceSpan.textContent;
         ghost.setAttribute("aria-hidden", "true");
-        ghost.style.width = `${snapshot.width}px`;
-        ghost.style.height = `${snapshot.height}px`;
-        ghost.style.font = snapshot.style.font;
-        ghost.style.lineHeight = snapshot.style.lineHeight;
-        ghost.style.letterSpacing = snapshot.style.letterSpacing;
-        ghost.style.color = snapshot.style.color;
-        ghost.style.textShadow = `0 2px 8px color-mix(in srgb, ${snapshot.style.color} 38%, transparent)`;
+        ghost.style.width = `${width}px`;
+        ghost.style.height = `${height}px`;
+        ghost.style.font = computed.font;
+        ghost.style.lineHeight = computed.lineHeight;
+        ghost.style.letterSpacing = computed.letterSpacing;
+        ghost.style.color = computed.color;
+        ghost.style.textShadow = `0 2px 8px color-mix(in srgb, ${computed.color} 38%, transparent)`;
 
-        const area = snapshot.width * snapshot.height;
+        const area = width * height;
         const body = {
-          source: snapshot.source,
+          source: sourceSpan,
           element: ghost,
-          x: snapshot.x,
-          y: snapshot.y,
-          width: snapshot.width,
-          height: snapshot.height,
+          x: startX,
+          y: startY,
+          width,
+          height,
           mass: clamp(area, 40, 5000),
           vx: 0,
           vy: 0,
@@ -1584,18 +1618,15 @@
           supported: false,
           sleepTime: 0,
           mobilePinUntil: 0,
-          tapPointerId: null,
-          tapStartX: 0,
-          tapStartY: 0,
-          tapStartTime: 0,
+          mobileHoldTimer: null,
           tapCount: 0,
-          lastTapAt: 0,
+          lastTapTime: 0,
           pointerType: "",
           pointerId: null,
           offsetX: 0,
           offsetY: 0,
-          targetX: snapshot.x,
-          targetY: snapshot.y,
+          targetX: startX,
+          targetY: startY,
           lastPointerX: 0,
           lastPointerY: 0,
           lastPointerTime: 0,
@@ -1604,10 +1635,23 @@
           cellTop: 0,
           cellBottom: 0
         };
-        snapshot.source.style.visibility = "hidden";
+
+        sourceSpan.classList.add("is-detached");
         bodyByElement.set(ghost, body);
         bodies.push(body);
-        fragment.appendChild(ghost);
+        ghostContainer.appendChild(ghost);
+        paintBody(body);
+        return body;
+      }
+
+      function selectBody(body) {
+        if (selectedBody && selectedBody.element) {
+          selectedBody.element.classList.remove("is-selected");
+        }
+        selectedBody = body;
+        if (selectedBody && selectedBody.element && !selectedBody.pinned) {
+          selectedBody.element.classList.add("is-selected");
+        }
       }
 
       function paintBody(body) {
@@ -1633,53 +1677,69 @@
         }
       }
 
-      function pinBody(body, method) {
+      function togglePinBody(body, method) {
         if (!body) return;
-        body.pinned = true;
-        body.dragging = false;
-        body.sleeping = true;
+        if (body.mobileHoldTimer) {
+          clearTimeout(body.mobileHoldTimer);
+          body.mobileHoldTimer = null;
+        }
         body.mobilePinUntil = 0;
-        body.vx = 0;
-        body.vy = 0;
-        body.tapCount = 0;
-        body.element.classList.add("is-pinned");
-        if (activeBody === body) activeBody = null;
-        selectedBody = body;
-        paintBody(body);
-        announce(method === "touch"
-          ? "Буква закреплена двойным нажатием. Перетащите её, чтобы переместить."
-          : "Буква закреплена. Нажмите C после выбора другой буквы, чтобы закрепить и её.");
+        body.element.classList.remove("is-holding");
+
+        if (body.pinned) {
+          // Снять закрепление
+          body.pinned = false;
+          body.sleeping = false;
+          body.sleepTime = 0;
+          body.element.classList.remove("is-pinned");
+          announce("Закрепление снято. Буква снова подчиняется гравитации.");
+          requestPhysicsFrame();
+        } else {
+          // Закрепить
+          body.pinned = true;
+          body.dragging = false;
+          body.sleeping = true;
+          body.vx = 0;
+          body.vy = 0;
+          body.element.classList.remove("is-selected");
+          body.element.classList.add("is-pinned");
+          if (activeBody === body) activeBody = null;
+          paintBody(body);
+          announce(method === "touch"
+            ? "Буква закреплена двойным нажатием!"
+            : "Буква закреплена! Нажмите клавишу C снова, чтобы открепить.");
+        }
       }
 
       function activate() {
         if (enabled) return;
         enabled = true;
         wrapPageLetters();
-        const snapshots = measureLetters();
-        const fragment = document.createDocumentFragment();
-        snapshots.forEach((snapshot) => createBody(snapshot, fragment));
-        document.body.appendChild(fragment);
+        if (!ghostContainer.parentElement) {
+          document.body.appendChild(ghostContainer);
+        }
         document.documentElement.classList.add("sandbox-active");
         button.setAttribute("aria-pressed", "true");
         button.textContent = "Выключить песочницу";
-        announce(`Песочница включена: активны ${bodies.length} букв крупного текста и главных кнопок. На компьютере выберите букву и нажмите C, на телефоне дважды нажмите на букву в течение 2 секунд после перетаскивания.`);
-        requestPhysicsFrame();
+        announce("Песочница включена. Потяните любую букву, чтобы освободить её! На ПК: клавиша C закрепит/открепит выбранную букву в любом месте. На телефоне: после отпускания буква замирает на 2 секунды — нажмите дважды, чтобы закрепить.");
       }
 
       function deactivate() {
         if (!enabled) return;
         enabled = false;
         activeBody = null;
-        selectedBody = null;
-        touchTapBody = null;
+        selectBody(null);
         if (animationFrame) cancelAnimationFrame(animationFrame);
         animationFrame = 0;
         lastFrameTime = 0;
-        bodies.forEach((body) => body.element.remove());
+        bodies.forEach((body) => {
+          if (body.mobileHoldTimer) clearTimeout(body.mobileHoldTimer);
+          body.element.remove();
+        });
         bodies.length = 0;
         letters.forEach((span) => {
           if (!span.isConnected) return;
-          span.style.visibility = "";
+          span.classList.remove("is-detached");
           span.replaceWith(document.createTextNode(span.textContent));
         });
         letters.length = 0;
@@ -1813,6 +1873,7 @@
           }
           if (body.mobilePinUntil) {
             body.mobilePinUntil = 0;
+            body.element.classList.remove("is-holding");
             body.sleeping = false;
             body.sleepTime = 0;
           }
@@ -1878,14 +1939,22 @@
       }
 
       function startDrag(body, event) {
-        body.pinned = false;
-        body.element.classList.remove("is-pinned");
+        if (body.mobileHoldTimer) {
+          clearTimeout(body.mobileHoldTimer);
+          body.mobileHoldTimer = null;
+        }
+        body.mobilePinUntil = 0;
+        body.element.classList.remove("is-holding");
+
+        // Если буква была закреплена, перетаскивание снимает закрепление
+        if (body.pinned) {
+          body.pinned = false;
+          body.element.classList.remove("is-pinned");
+        }
         body.sleeping = false;
         body.sleepTime = 0;
-        body.mobilePinUntil = 0;
-        body.tapCount = 0;
         body.dragging = true;
-        body.pointerType = event.pointerType || "";
+        body.pointerType = event.pointerType || "mouse";
         body.pointerId = event.pointerId;
         body.offsetX = event.clientX - body.x;
         body.offsetY = event.clientY + window.scrollY - body.y;
@@ -1895,58 +1964,57 @@
         body.lastPointerY = event.clientY;
         body.lastPointerTime = performance.now();
         activeBody = body;
-        selectedBody = body;
+        selectBody(body);
         try {
           body.element.setPointerCapture(event.pointerId);
-        } catch (_) {
-          // Перетаскивание продолжится обработчиками указателя документа.
-        }
+        } catch (_) {}
         updatePaletteColor(body, event.clientX, event.clientY);
         requestPhysicsFrame();
       }
 
-      function beginDrag(event) {
+      function handlePointerDown(event) {
         if (!enabled || event.button !== 0) return;
-        const ghost = event.target.closest && event.target.closest(".sandbox-ghost");
-        const body = ghost && bodyByElement.get(ghost);
-        if (!body) return;
-        event.preventDefault();
+        const target = event.target;
 
-        if (event.pointerType === "touch" && !body.pinned && body.mobilePinUntil > performance.now()) {
-          body.tapPointerId = event.pointerId;
-          body.tapStartX = event.clientX;
-          body.tapStartY = event.clientY;
-          body.tapStartTime = performance.now();
-          touchTapBody = body;
-          try {
-            ghost.setPointerCapture(event.pointerId);
-          } catch (_) {
-            // Обработчики документа сохраняют распознавание касания.
-          }
-          return;
-        }
+        // Проверяем, нажали ли на уже существующую летающую букву
+        const ghost = target.closest && target.closest(".sandbox-ghost");
+        if (ghost) {
+          const body = bodyByElement.get(ghost);
+          if (body) {
+            const now = performance.now();
+            // Обработка двойного нажатия на мобильных / тач
+            if (event.pointerType === "touch") {
+              if (now - body.lastTapTime < 450) {
+                body.tapCount += 1;
+              } else {
+                body.tapCount = 1;
+              }
+              body.lastTapTime = now;
 
-        startDrag(body, event);
-      }
+              if (body.tapCount >= 2) {
+                event.preventDefault();
+                togglePinBody(body, "touch");
+                return;
+              }
+            }
 
-      function moveDrag(event) {
-        if (touchTapBody && event.pointerId === touchTapBody.tapPointerId) {
-          const tapBody = touchTapBody;
-          if (Math.hypot(event.clientX - tapBody.tapStartX, event.clientY - tapBody.tapStartY) > 12) {
-            touchTapBody = null;
-            tapBody.tapPointerId = null;
-            startDrag(tapBody, {
-              ...event,
-              pointerId: event.pointerId,
-              pointerType: "touch",
-              clientX: tapBody.tapStartX,
-              clientY: tapBody.tapStartY
-            });
-          } else {
+            event.preventDefault();
+            startDrag(body, event);
             return;
           }
         }
 
+        // Проверяем, нажали ли на нетронутую букву в тексте
+        const letterSpan = target.closest && target.closest(".sandbox-letter:not(.is-detached)");
+        if (letterSpan) {
+          event.preventDefault();
+          const body = createLetterBody(letterSpan);
+          startDrag(body, event);
+          return;
+        }
+      }
+
+      function handlePointerMove(event) {
         const body = activeBody;
         if (!body || event.pointerId !== body.pointerId) return;
         const now = performance.now();
@@ -1962,49 +2030,35 @@
         requestPhysicsFrame();
       }
 
-      function finishTouchTap(event) {
-        const body = touchTapBody;
-        if (!body || event.pointerId !== body.tapPointerId) return false;
-        touchTapBody = null;
-        body.tapPointerId = null;
-        const now = performance.now();
-        const moved = Math.hypot(event.clientX - body.tapStartX, event.clientY - body.tapStartY);
-        if (now - body.tapStartTime > 450 || moved > 12 || body.mobilePinUntil <= now) return true;
-
-        body.tapCount = now - body.lastTapAt <= 450 ? body.tapCount + 1 : 1;
-        body.lastTapAt = now;
-        if (body.tapCount >= 2) {
-          pinBody(body, "touch");
-        } else {
-          announce("Ещё одно быстрое нажатие на букву закрепит её. Время: 2 секунды после отпускания.");
-        }
-        return true;
-      }
-
-      function releaseDrag(event) {
-        if (finishTouchTap(event)) return;
+      function handlePointerUp(event) {
         if (!activeBody || (event.pointerId !== undefined && event.pointerId !== activeBody.pointerId)) return;
         const body = activeBody;
         body.dragging = false;
         body.pointerId = null;
         activeBody = null;
 
+        // Поведение для мобильных устройств (touch):
+        // При отпускании буква зависает на 2 секунды.
+        // Если за эти 2 секунды нажать по ней 2 раза — она закрепляется навсегда!
         if (body.pointerType === "touch" && !body.pinned) {
           body.mobilePinUntil = performance.now() + 2000;
-          body.tapCount = 0;
-          body.lastTapAt = 0;
+          body.element.classList.add("is-holding");
           body.vx = 0;
           body.vy = 0;
           body.sleeping = true;
-          announce("Буква задержана на 2 секунды. Нажмите на неё дважды, чтобы закрепить.");
-          window.setTimeout(() => {
+          announce("Буква удерживается 2 секунды. Нажмите на неё 2 раза, чтобы закрепить!");
+
+          body.mobileHoldTimer = window.setTimeout(() => {
             if (!enabled || body.pinned || body.mobilePinUntil > performance.now()) return;
             body.mobilePinUntil = 0;
+            body.element.classList.remove("is-holding");
             body.sleeping = false;
             body.sleepTime = 0;
+            body.mobileHoldTimer = null;
             requestPhysicsFrame();
           }, 2050);
         }
+
         requestPhysicsFrame();
       }
 
@@ -2013,26 +2067,38 @@
         else activate();
       });
 
-      document.addEventListener("pointerdown", beginDrag);
-      document.addEventListener("pointermove", moveDrag, { passive: true });
-      document.addEventListener("pointerup", releaseDrag);
-      document.addEventListener("pointercancel", releaseDrag);
-      window.addEventListener("blur", () => releaseDrag({}));
+      document.addEventListener("pointerdown", handlePointerDown);
+      document.addEventListener("pointermove", handlePointerMove, { passive: true });
+      document.addEventListener("pointerup", handlePointerUp);
+      document.addEventListener("pointercancel", handlePointerUp);
+      window.addEventListener("blur", () => handlePointerUp({}));
+
+      // Обработка клавиши закрепления на ПК (C в английской или русской раскладке, либо KeyC)
       window.addEventListener("keydown", (event) => {
-        if (!enabled || event.repeat || event.key.toLowerCase() !== "c") return;
+        if (!enabled || event.repeat) return;
         const target = event.target;
         if (target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]')) return;
-        if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+
+        // Проверяем клавишу C (код KeyC, либо символ c/C/с/С)
+        const isKeyC = event.code === "KeyC" ||
+                       event.key === "c" || event.key === "C" ||
+                       event.key === "с" || event.key === "С";
+
+        if (!isKeyC) return;
+
         if (!selectedBody) {
-          announce("Сначала перетащите нужную букву, затем нажмите C.");
+          announce("Сначала потяните или выберите букву, затем нажмите C для закрепления.");
           return;
         }
+
         event.preventDefault();
-        pinBody(selectedBody, "keyboard");
+        togglePinBody(selectedBody, "keyboard");
       });
+
       window.addEventListener("scroll", () => {
         if (enabled) bodies.forEach(paintBody);
       }, { passive: true });
+
       window.addEventListener("resize", () => {
         if (!enabled) return;
         bodies.forEach(paintBody);
