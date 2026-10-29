@@ -1184,6 +1184,13 @@
       text-shadow: 0 3px 9px color-mix(in srgb, var(--accent-color) 32%, transparent);
     }
 
+    .sandbox-ghost.is-pinned {
+      text-decoration: underline;
+      text-decoration-color: var(--accent-color);
+      text-decoration-thickness: 2px;
+      text-underline-offset: 3px;
+    }
+
     @media (prefers-reduced-motion: reduce) {
       .sandbox-ghost { will-change: auto; }
       .sandbox-toggle { transition: none; }
@@ -1470,11 +1477,14 @@
       const status = document.querySelector(".sandbox-status");
       const CELL_SIZE = 48;
       const GRAVITY = 820;
+      const MIN_FONT_SIZE = 16;
       const bodies = [];
       const letters = [];
       const bodyByElement = new WeakMap();
       let enabled = false;
       let activeBody = null;
+      let selectedBody = null;
+      let touchTapBody = null;
       let animationFrame = 0;
       let lastFrameTime = 0;
 
@@ -1494,12 +1504,16 @@
         return Array.from(text);
       }
 
-      function wrapEveryPageLetter() {
+      function wrapPageLetters() {
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
             const parent = node.parentElement;
             if (!parent || !hasLetter.test(node.nodeValue)) return NodeFilter.FILTER_REJECT;
             if (parent.closest('script, style, svg, textarea, input, select, option, [contenteditable="true"], .sandbox-toggle, .sandbox-status')) {
+              return NodeFilter.FILTER_REJECT;
+            }
+            const isMainAction = parent.closest(".primary-link, .download-button");
+            if (!isMainAction && parseFloat(getComputedStyle(parent).fontSize) < MIN_FONT_SIZE) {
               return NodeFilter.FILTER_REJECT;
             }
             return NodeFilter.FILTER_ACCEPT;
@@ -1565,9 +1579,18 @@
           vy: 0,
           rotation: 0,
           dragging: false,
+          pinned: false,
           sleeping: false,
           supported: false,
           sleepTime: 0,
+          mobilePinUntil: 0,
+          tapPointerId: null,
+          tapStartX: 0,
+          tapStartY: 0,
+          tapStartTime: 0,
+          tapCount: 0,
+          lastTapAt: 0,
+          pointerType: "",
           pointerId: null,
           offsetX: 0,
           offsetY: 0,
@@ -1594,7 +1617,7 @@
         body.y = clamp(body.y, 0, maxY);
         const screenY = body.y - window.scrollY;
         body.element.style.transform = `translate3d(${body.x.toFixed(2)}px, ${screenY.toFixed(2)}px, 0) rotate(${body.rotation.toFixed(2)}deg)`;
-        body.element.style.willChange = body.dragging || !body.sleeping ? "transform" : "auto";
+        body.element.style.willChange = body.dragging ? "transform" : "auto";
       }
 
       function updatePaletteColor(body, pointerX, pointerY) {
@@ -1610,10 +1633,28 @@
         }
       }
 
+      function pinBody(body, method) {
+        if (!body) return;
+        body.pinned = true;
+        body.dragging = false;
+        body.sleeping = true;
+        body.mobilePinUntil = 0;
+        body.vx = 0;
+        body.vy = 0;
+        body.tapCount = 0;
+        body.element.classList.add("is-pinned");
+        if (activeBody === body) activeBody = null;
+        selectedBody = body;
+        paintBody(body);
+        announce(method === "touch"
+          ? "Буква закреплена двойным нажатием. Перетащите её, чтобы переместить."
+          : "Буква закреплена. Нажмите C после выбора другой буквы, чтобы закрепить и её.");
+      }
+
       function activate() {
         if (enabled) return;
         enabled = true;
-        wrapEveryPageLetter();
+        wrapPageLetters();
         const snapshots = measureLetters();
         const fragment = document.createDocumentFragment();
         snapshots.forEach((snapshot) => createBody(snapshot, fragment));
@@ -1621,7 +1662,7 @@
         document.documentElement.classList.add("sandbox-active");
         button.setAttribute("aria-pressed", "true");
         button.textContent = "Выключить песочницу";
-        announce(`Песочница включена: активны все буквы сайта (${bodies.length}). Перетаскивайте любую букву, она останется физическим объектом.`);
+        announce(`Песочница включена: активны ${bodies.length} букв крупного текста и главных кнопок. На компьютере выберите букву и нажмите C, на телефоне дважды нажмите на букву в течение 2 секунд после перетаскивания.`);
         requestPhysicsFrame();
       }
 
@@ -1629,6 +1670,8 @@
         if (!enabled) return;
         enabled = false;
         activeBody = null;
+        selectedBody = null;
+        touchTapBody = null;
         if (animationFrame) cancelAnimationFrame(animationFrame);
         animationFrame = 0;
         lastFrameTime = 0;
@@ -1646,7 +1689,7 @@
         announce("Песочница выключена. Страница восстановлена.");
       }
 
-      function solveCollisions() {
+      function solveCollisions(now) {
         const columns = Math.max(1, Math.ceil(document.documentElement.clientWidth / CELL_SIZE));
         const grid = new Map();
         const currentWorldHeight = worldHeight();
@@ -1696,26 +1739,31 @@
               if (ny < 0) a.supported = true;
               else if (ny > 0) b.supported = true;
 
-              if ((a.sleeping && !b.sleeping) || (b.sleeping && !a.sleeping)) {
-                a.sleeping = false;
-                b.sleeping = false;
-                a.sleepTime = 0;
-                b.sleepTime = 0;
-              }
+              const aFixed = a.dragging || a.pinned || a.mobilePinUntil > now;
+              const bFixed = b.dragging || b.pinned || b.mobilePinUntil > now;
+              if (aFixed && bFixed) continue;
 
-              if (a.dragging && !b.dragging) {
+              if (aFixed) {
                 b.x -= nx * penetration;
                 b.y -= ny * penetration;
                 if (nx) b.vx = -nx * Math.max(90, Math.abs(a.vx) * 0.45);
                 if (ny) b.vy = -ny * Math.max(65, Math.abs(a.vy) * 0.35);
                 b.sleeping = false;
-              } else if (b.dragging && !a.dragging) {
+                b.sleepTime = 0;
+              } else if (bFixed) {
                 a.x += nx * penetration;
                 a.y += ny * penetration;
                 if (nx) a.vx = nx * Math.max(90, Math.abs(b.vx) * 0.45);
                 if (ny) a.vy = ny * Math.max(65, Math.abs(b.vy) * 0.35);
                 a.sleeping = false;
-              } else if (!a.dragging && !b.dragging) {
+                a.sleepTime = 0;
+              } else {
+                if ((a.sleeping && !b.sleeping) || (b.sleeping && !a.sleeping)) {
+                  a.sleeping = false;
+                  b.sleeping = false;
+                  a.sleepTime = 0;
+                  b.sleepTime = 0;
+                }
                 const inverseA = 1 / a.mass;
                 const inverseB = 1 / b.mass;
                 const inverseTotal = inverseA + inverseB;
@@ -1747,13 +1795,26 @@
         const currentWorldHeight = worldHeight();
 
         bodies.forEach((body) => {
-          if (body.dragging) {
-            body.sleeping = false;
-            body.x = body.targetX;
-            body.y = body.targetY;
-            body.rotation = clamp(body.vx * 0.01, -18, 18);
-            body.supported = false;
+          if (body.dragging || body.pinned) {
+            if (body.dragging) {
+              body.sleeping = false;
+              body.x = body.targetX;
+              body.y = body.targetY;
+              body.rotation = clamp(body.vx * 0.01, -18, 18);
+              body.supported = false;
+            }
             return;
+          }
+          if (body.mobilePinUntil > now) {
+            body.sleeping = true;
+            body.vx = 0;
+            body.vy = 0;
+            return;
+          }
+          if (body.mobilePinUntil) {
+            body.mobilePinUntil = 0;
+            body.sleeping = false;
+            body.sleepTime = 0;
           }
           if (body.sleeping) return;
 
@@ -1783,27 +1844,29 @@
           }
         });
 
-        solveCollisions();
+        solveCollisions(now);
 
         bodies.forEach((body) => {
-          if (!body.dragging && body.supported && Math.abs(body.vx) < 20 && Math.abs(body.vy) < 22) {
+          if (body.pinned || body.mobilePinUntil > now) {
+            body.sleeping = true;
+          } else if (!body.dragging && body.supported && Math.abs(body.vx) < 20 && Math.abs(body.vy) < 22) {
             body.sleepTime += dt;
             if (body.sleepTime >= 0.32) {
               body.sleeping = true;
               body.vx = 0;
               body.vy = 0;
             }
-          } else {
+          } else if (!body.sleeping) {
             body.sleepTime = 0;
           }
-          if (body.sleeping && !body.supported && body.y + body.height < currentWorldHeight - 2) {
+          if (!body.pinned && body.mobilePinUntil <= now && body.sleeping && !body.supported && body.y + body.height < currentWorldHeight - 2) {
             body.sleeping = false;
             body.sleepTime = 0;
           }
           paintBody(body);
         });
 
-        if (bodies.some((body) => body.dragging || !body.sleeping)) {
+        if (bodies.some((body) => body.dragging || (!body.sleeping && !body.pinned))) {
           animationFrame = requestAnimationFrame(animate);
         } else {
           lastFrameTime = 0;
@@ -1814,16 +1877,15 @@
         if (enabled && !animationFrame) animationFrame = requestAnimationFrame(animate);
       }
 
-      function beginDrag(event) {
-        if (!enabled || event.button !== 0) return;
-        const ghost = event.target.closest && event.target.closest(".sandbox-ghost");
-        const body = ghost && bodyByElement.get(ghost);
-        if (!body) return;
-
-        event.preventDefault();
-        body.dragging = true;
+      function startDrag(body, event) {
+        body.pinned = false;
+        body.element.classList.remove("is-pinned");
         body.sleeping = false;
         body.sleepTime = 0;
+        body.mobilePinUntil = 0;
+        body.tapCount = 0;
+        body.dragging = true;
+        body.pointerType = event.pointerType || "";
         body.pointerId = event.pointerId;
         body.offsetX = event.clientX - body.x;
         body.offsetY = event.clientY + window.scrollY - body.y;
@@ -1833,8 +1895,9 @@
         body.lastPointerY = event.clientY;
         body.lastPointerTime = performance.now();
         activeBody = body;
+        selectedBody = body;
         try {
-          ghost.setPointerCapture(event.pointerId);
+          body.element.setPointerCapture(event.pointerId);
         } catch (_) {
           // Перетаскивание продолжится обработчиками указателя документа.
         }
@@ -1842,7 +1905,48 @@
         requestPhysicsFrame();
       }
 
+      function beginDrag(event) {
+        if (!enabled || event.button !== 0) return;
+        const ghost = event.target.closest && event.target.closest(".sandbox-ghost");
+        const body = ghost && bodyByElement.get(ghost);
+        if (!body) return;
+        event.preventDefault();
+
+        if (event.pointerType === "touch" && !body.pinned && body.mobilePinUntil > performance.now()) {
+          body.tapPointerId = event.pointerId;
+          body.tapStartX = event.clientX;
+          body.tapStartY = event.clientY;
+          body.tapStartTime = performance.now();
+          touchTapBody = body;
+          try {
+            ghost.setPointerCapture(event.pointerId);
+          } catch (_) {
+            // Обработчики документа сохраняют распознавание касания.
+          }
+          return;
+        }
+
+        startDrag(body, event);
+      }
+
       function moveDrag(event) {
+        if (touchTapBody && event.pointerId === touchTapBody.tapPointerId) {
+          const tapBody = touchTapBody;
+          if (Math.hypot(event.clientX - tapBody.tapStartX, event.clientY - tapBody.tapStartY) > 12) {
+            touchTapBody = null;
+            tapBody.tapPointerId = null;
+            startDrag(tapBody, {
+              ...event,
+              pointerId: event.pointerId,
+              pointerType: "touch",
+              clientX: tapBody.tapStartX,
+              clientY: tapBody.tapStartY
+            });
+          } else {
+            return;
+          }
+        }
+
         const body = activeBody;
         if (!body || event.pointerId !== body.pointerId) return;
         const now = performance.now();
@@ -1858,11 +1962,49 @@
         requestPhysicsFrame();
       }
 
+      function finishTouchTap(event) {
+        const body = touchTapBody;
+        if (!body || event.pointerId !== body.tapPointerId) return false;
+        touchTapBody = null;
+        body.tapPointerId = null;
+        const now = performance.now();
+        const moved = Math.hypot(event.clientX - body.tapStartX, event.clientY - body.tapStartY);
+        if (now - body.tapStartTime > 450 || moved > 12 || body.mobilePinUntil <= now) return true;
+
+        body.tapCount = now - body.lastTapAt <= 450 ? body.tapCount + 1 : 1;
+        body.lastTapAt = now;
+        if (body.tapCount >= 2) {
+          pinBody(body, "touch");
+        } else {
+          announce("Ещё одно быстрое нажатие на букву закрепит её. Время: 2 секунды после отпускания.");
+        }
+        return true;
+      }
+
       function releaseDrag(event) {
+        if (finishTouchTap(event)) return;
         if (!activeBody || (event.pointerId !== undefined && event.pointerId !== activeBody.pointerId)) return;
-        activeBody.dragging = false;
-        activeBody.pointerId = null;
+        const body = activeBody;
+        body.dragging = false;
+        body.pointerId = null;
         activeBody = null;
+
+        if (body.pointerType === "touch" && !body.pinned) {
+          body.mobilePinUntil = performance.now() + 2000;
+          body.tapCount = 0;
+          body.lastTapAt = 0;
+          body.vx = 0;
+          body.vy = 0;
+          body.sleeping = true;
+          announce("Буква задержана на 2 секунды. Нажмите на неё дважды, чтобы закрепить.");
+          window.setTimeout(() => {
+            if (!enabled || body.pinned || body.mobilePinUntil > performance.now()) return;
+            body.mobilePinUntil = 0;
+            body.sleeping = false;
+            body.sleepTime = 0;
+            requestPhysicsFrame();
+          }, 2050);
+        }
         requestPhysicsFrame();
       }
 
@@ -1870,11 +2012,24 @@
         if (enabled) deactivate();
         else activate();
       });
+
       document.addEventListener("pointerdown", beginDrag);
       document.addEventListener("pointermove", moveDrag, { passive: true });
       document.addEventListener("pointerup", releaseDrag);
       document.addEventListener("pointercancel", releaseDrag);
       window.addEventListener("blur", () => releaseDrag({}));
+      window.addEventListener("keydown", (event) => {
+        if (!enabled || event.repeat || event.key.toLowerCase() !== "c") return;
+        const target = event.target;
+        if (target && target.closest && target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) return;
+        if (!selectedBody) {
+          announce("Сначала перетащите нужную букву, затем нажмите C.");
+          return;
+        }
+        event.preventDefault();
+        pinBody(selectedBody, "keyboard");
+      });
       window.addEventListener("scroll", () => {
         if (enabled) bodies.forEach(paintBody);
       }, { passive: true });
